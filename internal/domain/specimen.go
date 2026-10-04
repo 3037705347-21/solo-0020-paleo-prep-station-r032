@@ -17,16 +17,17 @@ const (
 )
 
 type Specimen struct {
-	ID            string         `json:"id"`
-	CatalogNumber string         `json:"catalog_number"`
-	FieldLabel    string         `json:"field_label"`
-	TaxonHint     string         `json:"taxon_hint"`
-	MatrixKind    string         `json:"matrix_kind"`
-	JacketNotes   string         `json:"jacket_notes"`
-	Status        SpecimenStatus `json:"status"`
-	Version       int            `json:"version"`
-	CreatedAt     time.Time      `json:"created_at"`
-	UpdatedAt     time.Time      `json:"updated_at"`
+	ID              string         `json:"id"`
+	CatalogNumber   string         `json:"catalog_number"`
+	FieldLabel      string         `json:"field_label"`
+	TaxonHint       string         `json:"taxon_hint"`
+	MatrixKind      string         `json:"matrix_kind"`
+	JacketNotes     string         `json:"jacket_notes"`
+	Status          SpecimenStatus `json:"status"`
+	CurrentLocation Location       `json:"current_location"`
+	Version         int            `json:"version"`
+	CreatedAt       time.Time      `json:"created_at"`
+	UpdatedAt       time.Time      `json:"updated_at"`
 }
 
 func NewSpecimen(
@@ -62,16 +63,17 @@ func NewSpecimen(
 		return Specimen{}, err
 	}
 	return Specimen{
-		ID:            id,
-		CatalogNumber: catalog,
-		FieldLabel:    field,
-		TaxonHint:     taxon,
-		MatrixKind:    matrix,
-		JacketNotes:   notes,
-		Status:        SpecimenRegistered,
-		Version:       1,
-		CreatedAt:     now.UTC(),
-		UpdatedAt:     now.UTC(),
+		ID:              id,
+		CatalogNumber:   catalog,
+		FieldLabel:      field,
+		TaxonHint:       taxon,
+		MatrixKind:      matrix,
+		JacketNotes:     notes,
+		Status:          SpecimenRegistered,
+		CurrentLocation: LocationUndergroundStorage,
+		Version:         1,
+		CreatedAt:       now.UTC(),
+		UpdatedAt:       now.UTC(),
 	}, nil
 }
 
@@ -127,6 +129,25 @@ func (s *Specimen) MarkAvailable(now time.Time) error {
 		return contracts.Conflict("specimen_not_releasable", "只有已稳定标本可以办理放行")
 	}
 	s.Status = SpecimenAvailable
+	s.CurrentLocation = LocationReleased
+	s.Version++
+	s.UpdatedAt = now.UTC()
+	return nil
+}
+
+// ApplyMove 把当前库位推进到目标库位。已放行标本已经离馆，不能再在
+// 库位间移动；目标与当前库位相同的移动没有交接意义，直接拒绝。
+func (s *Specimen) ApplyMove(to Location, now time.Time) error {
+	if s.Status == SpecimenAvailable {
+		return contracts.Conflict("specimen_not_movable", "已放行标本不能在库位间移动")
+	}
+	if to == LocationReleased {
+		return contracts.Conflict("specimen_not_movable", "放行出库只能由研究放行流程完成")
+	}
+	if s.CurrentLocation == to {
+		return contracts.Conflict("already_at_location", "标本已在目标库位，不能重复移动")
+	}
+	s.CurrentLocation = to
 	s.Version++
 	s.UpdatedAt = now.UTC()
 	return nil

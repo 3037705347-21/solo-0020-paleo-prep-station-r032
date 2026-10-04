@@ -7,7 +7,7 @@
 ## 目录
 
 - `cmd/paleo-prep-station`：HTTP 服务入口和监听参数。
-- `cmd/workflowcheck`：通过真实 HTTP 处理器执行四条业务链路的本地验证命令。
+- `cmd/workflowcheck`：通过真实 HTTP 处理器执行五条业务链路的本地验证命令。
 - `internal/httpapi`：路由、请求解码、状态码映射和 JSON 输出。
 - `internal/station`：跨领域对象的编排、事务边界和业务流程。
 - `internal/domain`：标本、方案、进度和放行记录的状态与不变量。
@@ -27,11 +27,14 @@ go run ./cmd/paleo-prep-station --addr 127.0.0.1:18133
 
 - `GET /specimens` 与 `POST /specimens`
 - `GET /specimens/{id}`
+- `GET /specimens/{id}/moves` 与 `POST /specimens/{id}/moves`
 - `POST /specimens/{id}/plans`
 - `GET /plans/{id}`
 - `POST /plans/{id}/approval`
 - `POST /plans/{id}/progress`
 - `POST /specimens/{id}/release`
+
+标本登记后落入地下库（`underground_storage`），此后可在修复台（`repair_bench`）、冷柜（`cold_storage`）和临时展柜（`temporary_display`）之间移动。每次移动需要请求标识、去向、经手人和原因，移动记录与当前库位原子提交；相同请求标识的重复提交返回首次记录。研究放行会把当前库位置为 `released` 并追加最后一条移动记录，已放行标本不再显示为库内位置。
 
 ## 本地验证
 
@@ -42,6 +45,7 @@ go run ./cmd/workflowcheck --workflow register-specimen
 go run ./cmd/workflowcheck --workflow approve-prep-plan
 go run ./cmd/workflowcheck --workflow log-preparation
 go run ./cmd/workflowcheck --workflow release-for-study
+go run ./cmd/workflowcheck --workflow move-specimen
 ```
 
 这些检查会启动临时 HTTP 处理器并调用真实公共路由。

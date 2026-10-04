@@ -40,10 +40,24 @@ func (s *Service) ReleaseSpecimen(
 		if err != nil {
 			return err
 		}
+		movement, err := domain.NewMovementRecord(
+			s.nextID("move"),
+			specimen,
+			m.MovementsForSpecimen(specimenID),
+			record.ID,
+			domain.LocationReleased,
+			record.ApprovedBy,
+			record.Purpose,
+			s.now(),
+		)
+		if err != nil {
+			return err
+		}
 		if err := specimen.MarkAvailable(s.now()); err != nil {
 			return err
 		}
 		m.PutRelease(record)
+		m.AppendMovement(movement)
 		m.PutSpecimen(specimen)
 		created = record
 		return nil

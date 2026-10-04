@@ -12,6 +12,7 @@ type state struct {
 	plans     map[string]domain.PrepPlan
 	progress  map[string][]domain.ProgressEntry
 	releases  map[string]domain.ReleaseRecord
+	movements map[string][]domain.MovementRecord
 }
 
 type MemoryRepository struct {
@@ -26,6 +27,7 @@ func NewMemory() *MemoryRepository {
 			plans:     make(map[string]domain.PrepPlan),
 			progress:  make(map[string][]domain.ProgressEntry),
 			releases:  make(map[string]domain.ReleaseRecord),
+			movements: make(map[string][]domain.MovementRecord),
 		},
 	}
 }
@@ -54,6 +56,7 @@ func cloneMutation(source state) *Mutation {
 		plans:     make(map[string]domain.PrepPlan, len(source.plans)),
 		progress:  make(map[string][]domain.ProgressEntry, len(source.progress)),
 		releases:  make(map[string]domain.ReleaseRecord, len(source.releases)),
+		movements: make(map[string][]domain.MovementRecord, len(source.movements)),
 	}
 	for key, value := range source.specimens {
 		copied.specimens[key] = value
@@ -66,6 +69,9 @@ func cloneMutation(source state) *Mutation {
 	}
 	for key, value := range source.releases {
 		copied.releases[key] = value
+	}
+	for key, values := range source.movements {
+		copied.movements[key] = append([]domain.MovementRecord(nil), values...)
 	}
 	return &Mutation{state: copied}
 }
@@ -163,4 +169,24 @@ func (m *Mutation) ReleaseForSpecimen(specimenID string) (domain.ReleaseRecord, 
 
 func (m *Mutation) PutRelease(value domain.ReleaseRecord) {
 	m.state.releases[value.ID] = value
+}
+
+// MovementsForSpecimen 返回该标本按追加顺序排列的完整移动历史。
+func (m *Mutation) MovementsForSpecimen(specimenID string) []domain.MovementRecord {
+	values := make([]domain.MovementRecord, 0, len(m.state.movements[specimenID]))
+	return append(values, m.state.movements[specimenID]...)
+}
+
+// MovementForRequest 按客户端幂等标识查找该标本已有的移动记录。
+func (m *Mutation) MovementForRequest(specimenID string, requestID string) (domain.MovementRecord, bool) {
+	for _, value := range m.state.movements[specimenID] {
+		if value.RequestID == requestID {
+			return value, true
+		}
+	}
+	return domain.MovementRecord{}, false
+}
+
+func (m *Mutation) AppendMovement(value domain.MovementRecord) {
+	m.state.movements[value.SpecimenID] = append(m.state.movements[value.SpecimenID], value)
 }

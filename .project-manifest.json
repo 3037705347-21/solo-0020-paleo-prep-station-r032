@@ -114,11 +114,33 @@
       "steps": [
         "verify the specimen is stabilized",
         "verify that no unfinished plan remains",
-        "create the permanent release record and mark the specimen available"
+        "create the permanent release record, mark the specimen available, and move it out of storage in one repository mutation"
       ],
-      "success": "returns the release record and makes the specimen available",
+      "success": "returns the release record, makes the specimen available, and leaves the location at released",
       "failure": "returns conflict if the specimen is unstable or still has an unfinished plan",
       "verification": "workflowcheck completes preparation, releases the specimen, and verifies the terminal state",
+      "module_ids": [
+        "entrypoint",
+        "runtimecheck",
+        "httpapi",
+        "station",
+        "domain",
+        "repository",
+        "contracts"
+      ]
+    },
+    {
+      "id": "move-specimen",
+      "name": "Move specimen between storage locations",
+      "entry": "POST /specimens/{id}/moves",
+      "steps": [
+        "decode and validate the handover request and target location",
+        "replay the stored record when the request id was already applied",
+        "append the immutable movement record and update the current location in one repository mutation"
+      ],
+      "success": "returns the movement record and one consistent current location in list, detail, and plan creation",
+      "failure": "returns conflict for a released specimen or a move to the current location, validation errors for unknown locations, and not found for unknown specimens",
+      "verification": "workflowcheck moves a specimen through the storage locations, replays a duplicate submission, returns to the original location, releases it, and verifies the preserved history",
       "module_ids": [
         "entrypoint",
         "runtimecheck",

@@ -19,9 +19,29 @@ import (
 )
 
 type specimenView struct {
-	ID            string `json:"id"`
-	CatalogNumber string `json:"catalog_number"`
-	Status        string `json:"status"`
+	ID              string `json:"id"`
+	CatalogNumber   string `json:"catalog_number"`
+	Status          string `json:"status"`
+	CurrentLocation string `json:"current_location"`
+}
+
+type specimenListView struct {
+	Items []specimenView `json:"items"`
+}
+
+type movementView struct {
+	ID           string `json:"id"`
+	SpecimenID   string `json:"specimen_id"`
+	RequestID    string `json:"request_id"`
+	Sequence     int    `json:"sequence"`
+	FromLocation string `json:"from_location"`
+	ToLocation   string `json:"to_location"`
+	MovedBy      string `json:"moved_by"`
+	Reason       string `json:"reason"`
+}
+
+type movementListView struct {
+	Items []movementView `json:"items"`
 }
 
 type planView struct {
@@ -170,6 +190,9 @@ func run(workflow string) error {
 			return fmt.Errorf("expected available specimen, got %s", fetched.Status)
 		}
 		return nil
+
+	case "move-specimen":
+		return checkMoveSpecimen(client, server.URL)
 	default:
 		return fmt.Errorf("unknown workflow %q", workflow)
 	}
@@ -250,6 +273,260 @@ func recordProgress(client *http.Client, baseURL, planID string, percent int, st
 		http.StatusCreated,
 		&ignored,
 	)
+}
+
+// checkMoveSpecimen 覆盖库位移动链路：登记落位、幂等重放、回到原库位、
+// 历史保留、非法去向、未知标本以及放行离馆后的终态。
+func checkMoveSpecimen(client *http.Client, baseURL string) error {
+	specimen, err := registerSpecimen(client, baseURL)
+	if err != nil {
+		return err
+	}
+	if specimen.CurrentLocation != "underground_storage" {
+		return fmt.Errorf("expected initial location underground_storage, got %s", specimen.CurrentLocation)
+	}
+
+	first, err := moveSpecimen(client, baseURL, specimen.ID, contracts.MoveSpecimenRequest{
+		RequestID:  "REQ-MOVE-001",
+		ToLocation: "repair_bench",
+		MovedBy:    "keeper-zhou",
+		Reason:     "送修复台清理",
+	}, http.StatusCreated)
+	if err != nil {
+		return err
+	}
+	if first.FromLocation != "underground_storage" || first.ToLocation != "repair_bench" || first.Sequence != 1 {
+		return errors.New("first movement record does not reflect the handover")
+	}
+
+	replay, err := moveSpecimen(client, baseURL, specimen.ID, contracts.MoveSpecimenRequest{
+		RequestID:  "REQ-MOVE-001",
+		ToLocation: "repair_bench",
+		MovedBy:    "keeper-zhou",
+		Reason:     "送修复台清理",
+	}, http.StatusOK)
+	if err != nil {
+		return err
+	}
+	if replay.ID != first.ID {
+		return errors.New("duplicate submission did not return the original movement record")
+	}
+	moves, err := listMovements(client, baseURL, specimen.ID)
+	if err != nil {
+		return err
+	}
+	if len(moves) != 1 {
+		return fmt.Errorf("expected exactly one movement after duplicate submission, got %d", len(moves))
+	}
+
+	if _, err := moveSpecimen(client, baseURL, specimen.ID, contracts.MoveSpecimenRequest{
+		RequestID:  "REQ-MOVE-001",
+		ToLocation: "repair_bench",
+		MovedBy:    "keeper-zhou",
+		Reason:     "改写原因",
+	}, http.StatusConflict); err != nil {
+		return err
+	}
+
+	if _, err := moveSpecimen(client, baseURL, specimen.ID, contracts.MoveSpecimenRequest{
+		RequestID:  "REQ-MOVE-002",
+		ToLocation: "repair_bench",
+		MovedBy:    "keeper-zhou",
+		Reason:     "重复移动到当前库位",
+	}, http.StatusConflict); err != nil {
+		return err
+	}
+
+	if err := expectLocation(client, baseURL, specimen.ID, "repair_bench"); err != nil {
+		return err
+	}
+
+	plan, err := createPlan(client, baseURL, specimen.ID)
+	if err != nil {
+		return err
+	}
+	var approved planView
+	if err := requestJSON(
+		client,
+		http.MethodPost,
+		baseURL+"/plans/"+plan.ID+"/approval",
+		contracts.ApprovalRequest{ApprovedBy: "curator-lin"},
+		http.StatusOK,
+		&approved,
+	); err != nil {
+		return err
+	}
+	if err := recordProgress(client, baseURL, plan.ID, 40, "基质粗剥"); err != nil {
+		return err
+	}
+
+	if _, err := moveSpecimen(client, baseURL, specimen.ID, contracts.MoveSpecimenRequest{
+		RequestID:  "REQ-MOVE-003",
+		ToLocation: "cold_storage",
+		MovedBy:    "keeper-zhou",
+		Reason:     "暂停期间低温保存",
+	}, http.StatusCreated); err != nil {
+		return err
+	}
+	back, err := moveSpecimen(client, baseURL, specimen.ID, contracts.MoveSpecimenRequest{
+		RequestID:  "REQ-MOVE-004",
+		ToLocation: "underground_storage",
+		MovedBy:    "keeper-zhou",
+		Reason:     "回到地下库原位",
+	}, http.StatusCreated)
+	if err != nil {
+		return err
+	}
+	if back.FromLocation != "cold_storage" || back.ToLocation != "underground_storage" || back.Sequence != 3 {
+		return errors.New("return-to-original-location movement is inconsistent")
+	}
+
+	moves, err = listMovements(client, baseURL, specimen.ID)
+	if err != nil {
+		return err
+	}
+	if len(moves) != 3 {
+		return fmt.Errorf("expected three preserved movements, got %d", len(moves))
+	}
+	wantChain := [][2]string{
+		{"underground_storage", "repair_bench"},
+		{"repair_bench", "cold_storage"},
+		{"cold_storage", "underground_storage"},
+	}
+	for i, want := range wantChain {
+		if moves[i].Sequence != i+1 || moves[i].FromLocation != want[0] || moves[i].ToLocation != want[1] {
+			return fmt.Errorf("movement history entry %d was overwritten or reordered", i+1)
+		}
+	}
+
+	if _, err := moveSpecimen(client, baseURL, specimen.ID, contracts.MoveSpecimenRequest{
+		RequestID:  "REQ-MOVE-005",
+		ToLocation: "released",
+		MovedBy:    "keeper-zhou",
+		Reason:     "绕过放行流程",
+	}, http.StatusBadRequest); err != nil {
+		return err
+	}
+	if _, err := moveSpecimen(client, baseURL, specimen.ID, contracts.MoveSpecimenRequest{
+		RequestID:  "REQ-MOVE-006",
+		ToLocation: "unknown-place",
+		MovedBy:    "keeper-zhou",
+		Reason:     "不存在的位置",
+	}, http.StatusBadRequest); err != nil {
+		return err
+	}
+	if _, err := moveSpecimen(client, baseURL, "specimen-missing", contracts.MoveSpecimenRequest{
+		RequestID:  "REQ-MOVE-007",
+		ToLocation: "cold_storage",
+		MovedBy:    "keeper-zhou",
+		Reason:     "未知标本",
+	}, http.StatusNotFound); err != nil {
+		return err
+	}
+	var ignored struct{}
+	if err := requestJSON(client, http.MethodGet, baseURL+"/specimens/specimen-missing/moves", nil, http.StatusNotFound, &ignored); err != nil {
+		return err
+	}
+
+	if err := recordProgress(client, baseURL, plan.ID, 100, "表面加固"); err != nil {
+		return err
+	}
+	var release releaseView
+	if err := requestJSON(
+		client,
+		http.MethodPost,
+		baseURL+"/specimens/"+specimen.ID+"/release",
+		contracts.ReleaseRequest{
+			Purpose:    "比较解剖研究",
+			Recipient:  "地层研究组",
+			ApprovedBy: "keeper-zhou",
+		},
+		http.StatusCreated,
+		&release,
+	); err != nil {
+		return err
+	}
+	if err := expectLocation(client, baseURL, specimen.ID, "released"); err != nil {
+		return err
+	}
+	var fetched specimenView
+	if err := requestJSON(client, http.MethodGet, baseURL+"/specimens/"+specimen.ID, nil, http.StatusOK, &fetched); err != nil {
+		return err
+	}
+	if fetched.Status != "available" {
+		return fmt.Errorf("expected available specimen, got %s", fetched.Status)
+	}
+
+	moves, err = listMovements(client, baseURL, specimen.ID)
+	if err != nil {
+		return err
+	}
+	if len(moves) != 4 {
+		return fmt.Errorf("expected release to append a fourth movement, got %d", len(moves))
+	}
+	last := moves[3]
+	if last.Sequence != 4 || last.FromLocation != "underground_storage" || last.ToLocation != "released" || last.MovedBy != "keeper-zhou" {
+		return errors.New("release handover movement is missing or inconsistent")
+	}
+
+	if _, err := moveSpecimen(client, baseURL, specimen.ID, contracts.MoveSpecimenRequest{
+		RequestID:  "REQ-MOVE-008",
+		ToLocation: "repair_bench",
+		MovedBy:    "keeper-zhou",
+		Reason:     "已放行仍尝试移动",
+	}, http.StatusConflict); err != nil {
+		return err
+	}
+	return nil
+}
+
+func moveSpecimen(
+	client *http.Client,
+	baseURL string,
+	specimenID string,
+	request contracts.MoveSpecimenRequest,
+	wantStatus int,
+) (movementView, error) {
+	var movement movementView
+	err := requestJSON(
+		client,
+		http.MethodPost,
+		baseURL+"/specimens/"+specimenID+"/moves",
+		request,
+		wantStatus,
+		&movement,
+	)
+	return movement, err
+}
+
+func listMovements(client *http.Client, baseURL, specimenID string) ([]movementView, error) {
+	var list movementListView
+	err := requestJSON(client, http.MethodGet, baseURL+"/specimens/"+specimenID+"/moves", nil, http.StatusOK, &list)
+	return list.Items, err
+}
+
+// expectLocation 确认详情与列表读取到同一个当前库位事实。
+func expectLocation(client *http.Client, baseURL, specimenID, want string) error {
+	var detail specimenView
+	if err := requestJSON(client, http.MethodGet, baseURL+"/specimens/"+specimenID, nil, http.StatusOK, &detail); err != nil {
+		return err
+	}
+	if detail.CurrentLocation != want {
+		return fmt.Errorf("detail shows location %s, want %s", detail.CurrentLocation, want)
+	}
+	var list specimenListView
+	if err := requestJSON(client, http.MethodGet, baseURL+"/specimens", nil, http.StatusOK, &list); err != nil {
+		return err
+	}
+	for _, item := range list.Items {
+		if item.ID == specimenID {
+			if item.CurrentLocation != want {
+				return fmt.Errorf("list shows location %s, want %s", item.CurrentLocation, want)
+			}
+			return nil
+		}
+	}
+	return errors.New("specimen missing from list response")
 }
 
 func requestJSON(

@@ -31,3 +31,12 @@ type ReleaseRequest struct {
 	Recipient  string `json:"recipient"`
 	ApprovedBy string `json:"approved_by"`
 }
+
+// MoveSpecimenRequest 描述一次库位交接。RequestID 是客户端生成的幂等标识，
+// 重复提交同一标识会返回首次的移动记录而不会产生重复交接。
+type MoveSpecimenRequest struct {
+	RequestID  string `json:"request_id"`
+	ToLocation string `json:"to_location"`
+	MovedBy    string `json:"moved_by"`
+	Reason     string `json:"reason"`
+}
