@@ -12,6 +12,7 @@ type state struct {
 	plans     map[string]domain.PrepPlan
 	progress  map[string][]domain.ProgressEntry
 	releases  map[string]domain.ReleaseRecord
+	ledgers   map[string]domain.LocationLedger
 }
 
 type MemoryRepository struct {
@@ -26,6 +27,7 @@ func NewMemory() *MemoryRepository {
 			plans:     make(map[string]domain.PrepPlan),
 			progress:  make(map[string][]domain.ProgressEntry),
 			releases:  make(map[string]domain.ReleaseRecord),
+			ledgers:   make(map[string]domain.LocationLedger),
 		},
 	}
 }
@@ -54,6 +56,7 @@ func cloneMutation(source state) *Mutation {
 		plans:     make(map[string]domain.PrepPlan, len(source.plans)),
 		progress:  make(map[string][]domain.ProgressEntry, len(source.progress)),
 		releases:  make(map[string]domain.ReleaseRecord, len(source.releases)),
+		ledgers:   make(map[string]domain.LocationLedger, len(source.ledgers)),
 	}
 	for key, value := range source.specimens {
 		copied.specimens[key] = value
@@ -66,6 +69,10 @@ func cloneMutation(source state) *Mutation {
 	}
 	for key, value := range source.releases {
 		copied.releases[key] = value
+	}
+	for key, value := range source.ledgers {
+		value.Moves = append([]domain.MoveRecord(nil), value.Moves...)
+		copied.ledgers[key] = value
 	}
 	return &Mutation{state: copied}
 }
@@ -163,4 +170,13 @@ func (m *Mutation) ReleaseForSpecimen(specimenID string) (domain.ReleaseRecord, 
 
 func (m *Mutation) PutRelease(value domain.ReleaseRecord) {
 	m.state.releases[value.ID] = value
+}
+
+func (m *Mutation) LocationLedgerForSpecimen(specimenID string) (domain.LocationLedger, bool) {
+	value, ok := m.state.ledgers[specimenID]
+	return value, ok
+}
+
+func (m *Mutation) PutLocationLedger(value domain.LocationLedger) {
+	m.state.ledgers[value.SpecimenID] = value
 }

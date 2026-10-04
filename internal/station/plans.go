@@ -23,6 +23,19 @@ func (s *Service) CreatePlan(
 		if !ok {
 			return notFoundSpecimen(specimenID)
 		}
+		// 方案创建与列表、详情读取同一份库位台账；已放行离库的标本
+		// 即使状态被误判，也不能再挂接新方案。
+		ledger, ok := m.LocationLedgerForSpecimen(specimenID)
+		if !ok {
+			return contracts.Internal(
+				"location_ledger_missing",
+				"标本缺少库位台账 "+specimenID,
+				nil,
+			)
+		}
+		if !ledger.IsOnSite() {
+			return contracts.Conflict("specimen_off_site", "标本已离库，不能创建修复方案")
+		}
 		if m.HasOpenPlan(specimenID) {
 			return contracts.Conflict("open_plan_exists", "该标本已存在未结束的修复方案")
 		}

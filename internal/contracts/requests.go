@@ -31,3 +31,12 @@ type ReleaseRequest struct {
 	Recipient  string `json:"recipient"`
 	ApprovedBy string `json:"approved_by"`
 }
+
+// MoveRequest 登记一次库位交接。FromLocation 是交接方声明的当前库位，
+// 与台账不一致时服务拒绝移动，以避免基于过期事实交接或重复提交被静默接受。
+type MoveRequest struct {
+	FromLocation string `json:"from_location"`
+	ToLocation   string `json:"to_location"`
+	HandledBy    string `json:"handled_by"`
+	Reason       string `json:"reason"`
+}

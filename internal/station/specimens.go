@@ -33,7 +33,12 @@ func (s *Service) RegisterSpecimen(
 		if _, exists := m.FindSpecimenByCatalog(value.CatalogNumber); exists {
 			return contracts.Conflict("duplicate_catalog_number", "目录号已存在，不能覆盖原标本")
 		}
+		ledger, err := domain.NewLocationLedger(value.ID, s.now())
+		if err != nil {
+			return err
+		}
 		m.PutSpecimen(value)
+		m.PutLocationLedger(ledger)
 		created = value
 		return nil
 	})

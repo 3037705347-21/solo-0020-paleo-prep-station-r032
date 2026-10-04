@@ -26,12 +26,15 @@ go run ./cmd/paleo-prep-station --addr 127.0.0.1:18133
 ## 主要接口
 
 - `GET /specimens` 与 `POST /specimens`
-- `GET /specimens/{id}`
+- `GET /specimens/{id}`（返回当前库位、`on_site` 标记和完整移动历史）
+- `GET /specimens/{id}/moves` 与 `POST /specimens/{id}/moves`
 - `POST /specimens/{id}/plans`
 - `GET /plans/{id}`
 - `POST /plans/{id}/approval`
 - `POST /plans/{id}/progress`
 - `POST /specimens/{id}/release`
+
+库位固定为地下库（`underground_storage`）、修复台（`prep_bench`）、冷柜（`cold_cabinet`）和临时展柜（`temporary_display`），登记后默认在地下库。移动提交来源、去向、经手人和原因：与上一条交接完全相同的重复提交回放原记录（`200`，`replayed: true`）；来源与当前库位不符、原地移动或对已放行标本移动返回 `409`，且不会产生任何记录。放行后当前库位变为 `released`、`on_site` 为 `false`。
 
 ## 本地验证
 
@@ -42,6 +45,7 @@ go run ./cmd/workflowcheck --workflow register-specimen
 go run ./cmd/workflowcheck --workflow approve-prep-plan
 go run ./cmd/workflowcheck --workflow log-preparation
 go run ./cmd/workflowcheck --workflow release-for-study
+go run ./cmd/workflowcheck --workflow track-location
 ```
 
 这些检查会启动临时 HTTP 处理器并调用真实公共路由。

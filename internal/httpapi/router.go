@@ -19,6 +19,8 @@ func NewRouter(service *station.Service) http.Handler {
 	mux.HandleFunc("GET /specimens/{id}", api.getSpecimen)
 	mux.HandleFunc("GET /specimens/{id}/plans", api.listPlansForSpecimen)
 	mux.HandleFunc("POST /specimens/{id}/plans", api.createPlan)
+	mux.HandleFunc("GET /specimens/{id}/moves", api.listMoves)
+	mux.HandleFunc("POST /specimens/{id}/moves", api.moveSpecimen)
 	mux.HandleFunc("POST /specimens/{id}/release", api.releaseSpecimen)
 	mux.HandleFunc("GET /plans/{id}", api.getPlan)
 	mux.HandleFunc("POST /plans/{id}/approval", api.approvePlan)
